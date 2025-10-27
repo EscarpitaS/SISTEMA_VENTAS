@@ -1,0 +1,10 @@
+build/
+build-*/
+*.user
+*.autosave
+CMakeLists.txt.user
+.vscode/
+.idea/
+*.o
+*.so
+*.dll
