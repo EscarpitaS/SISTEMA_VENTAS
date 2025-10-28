@@ -5,7 +5,6 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  # También al crear tags para versiones
   create:
     tags:
       - 'v*'
@@ -13,122 +12,145 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-    
+
     - name: Install Qt
       uses: jurplel/install-qt-action@v3
       with:
         version: '6.6.1'
         host: 'windows'
         target: 'desktop'
-        arch: 'win64_mingw'
+        arch: 'win64_msvc2019_64'
         modules: 'qt5compat qtmultimedia'
         cache: true
-    
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
     - name: Configure CMake
       run: |
         mkdir build
         cd build
-        cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
-    
+        cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
+
     - name: Build
       run: |
         cd build
-        cmake --build . --config Release
-    
+        nmake
+
     - name: Deploy Qt dependencies
       run: |
         cd build
         windeployqt.exe SQL_LOGIN.exe --release --no-translations
-    
-    - name: Copy MySQL plugin (if exists)
+
+    - name: Copy MySQL plugin
       continue-on-error: true
+      shell: pwsh
       run: |
-        $qtPath = "$env:Qt6_DIR"
+        $qtPath = $env:Qt6_DIR
         $sqlDriversSource = "$qtPath/plugins/sqldrivers"
         $sqlDriversDest = "build/sqldrivers"
-        
+
         if (Test-Path $sqlDriversSource) {
           New-Item -ItemType Directory -Force -Path $sqlDriversDest
-          Copy-Item "$sqlDriversSource/qsqlmysql.dll" -Destination $sqlDriversDest -ErrorAction SilentlyContinue
+          if (Test-Path "$sqlDriversSource/qsqlmysql.dll") {
+            Copy-Item "$sqlDriversSource/qsqlmysql.dll" -Destination $sqlDriversDest
+            Write-Host "MySQL plugin copied successfully"
+          }
         }
-    
+
     - name: Create README
+      shell: pwsh
       run: |
-        @"
-        ===========================================
-           SISTEMA DE VENTAS - Windows Portable
-        ===========================================
-        
-        REQUISITOS:
-        - Windows 10 o superior
-        - Conexión a Internet (para conectar a la base de datos)
-        
-        INSTRUCCIONES:
-        1. Extraer todo el contenido del ZIP a una carpeta
-        2. Doble clic en SQL_LOGIN.exe
-        3. Ingresar credenciales de acceso
-        
-        NOTAS:
-        - No requiere instalación
-        - No requiere permisos de administrador
-        - Todas las dependencias están incluidas
-        
-        CONFIGURACIÓN:
-        La aplicación se conecta a:
-        Host: database-2.c8x408ogmb0e.us-east-1.rds.amazonaws.com
-        Puerto: 3306
-        Base de datos: sistema_ventas
-        
-        Versión: ${{ github.ref_name }}
-        Fecha de compilación: ${{ github.event.head_commit.timestamp }}
-        ===========================================
-        "@ | Out-File -FilePath "build/README.txt" -Encoding UTF8
-    
+        $readme = @"
+===========================================
+   SISTEMA DE VENTAS - Windows Portable
+===========================================
+
+REQUISITOS:
+- Windows 10 o superior (x64)
+- Conexión a Internet para acceder a la base de datos
+
+INSTRUCCIONES:
+1. Extraer todo el contenido del ZIP a una carpeta
+2. Doble clic en SQL_LOGIN.exe o Ejecutar.bat
+3. Ingresar credenciales de acceso
+
+NOTAS:
+- No requiere instalación
+- No requiere permisos de administrador
+- Todas las dependencias de Qt están incluidas
+
+CONFIGURACIÓN DE BASE DE DATOS:
+La aplicación se conecta automáticamente a:
+- Host: database-2.c8x408ogmb0e.us-east-1.rds.amazonaws.com
+- Puerto: 3306
+- Base de datos: sistema_ventas
+
+SOLUCIÓN DE PROBLEMAS:
+- Si no inicia, instale Visual C++ Redistributable 2019
+- Verifique su conexión a Internet
+- Contacte al administrador del sistema
+
+Versión: ${{ github.ref_name }}
+Compilado: ${{ github.event.head_commit.timestamp }}
+===========================================
+"@
+        $readme | Out-File -FilePath "build/README.txt" -Encoding UTF8
+
     - name: Create launcher batch file
+      shell: pwsh
       run: |
-        @"
-        @echo off
-        title Sistema de Ventas
-        echo ========================================
-        echo    SISTEMA DE VENTAS
-        echo ========================================
-        echo.
-        echo Iniciando aplicacion...
-        echo.
-        
-        SQL_LOGIN.exe
-        
-        if errorlevel 1 (
-            echo.
-            echo ========================================
-            echo ERROR: No se pudo iniciar la aplicacion
-            echo ========================================
-            echo.
-            echo Posibles causas:
-            echo - Falta alguna DLL necesaria
-            echo - Sin conexion a Internet
-            echo - Error en la base de datos
-            echo.
-            pause
-        )
-        "@ | Out-File -FilePath "build/Ejecutar.bat" -Encoding ASCII
-    
+        $batch = @"
+@echo off
+title Sistema de Ventas
+cls
+echo ========================================
+echo    SISTEMA DE VENTAS
+echo ========================================
+echo.
+echo Iniciando aplicacion...
+echo.
+
+SQL_LOGIN.exe
+
+if errorlevel 1 (
+    echo.
+    echo ========================================
+    echo ERROR: No se pudo iniciar la aplicacion
+    echo ========================================
+    echo.
+    echo Posibles causas:
+    echo - Falta Visual C++ Redistributable 2019
+    echo - Sin conexion a Internet
+    echo - Error de conexion a la base de datos
+    echo.
+    echo Presione cualquier tecla para salir...
+    pause >nul
+)
+"@
+        $batch | Out-File -FilePath "build/Ejecutar.bat" -Encoding ASCII
+
     - name: Package portable version
+      shell: pwsh
       run: |
         cd build
-        7z a ../SistemaVentas-Windows-Portable.zip * -xr!*.cpp -xr!*.h -xr!CMakeFiles -xr!cmake_install.cmake -xr!Makefile
-    
+        # Excluir archivos innecesarios
+        $filesToZip = Get-ChildItem -Exclude @('*.cpp', '*.h', '*.obj', '*.o', 'CMakeFiles', 'cmake_install.cmake', 'Makefile', '*.cmake')
+        Compress-Archive -Path $filesToZip -DestinationPath ../SistemaVentas-Windows-Portable.zip -Force
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: SistemaVentas-Windows-${{ github.sha }}
         path: SistemaVentas-Windows-Portable.zip
         retention-days: 90
-    
+
     - name: Create Release (on tag)
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v1
@@ -136,23 +158,24 @@ jobs:
         files: SistemaVentas-Windows-Portable.zip
         body: |
           ## Sistema de Ventas - Release ${{ github.ref_name }}
-          
+
           ### 📦 Descarga
           Descargar el archivo ZIP y extraer en cualquier carpeta.
-          
+
           ### ✨ Características
           - Versión portable (no requiere instalación)
           - No requiere permisos de administrador
           - Todas las dependencias incluidas
-          
+
           ### 🚀 Uso
           1. Extraer el ZIP
           2. Ejecutar `Ejecutar.bat` o `SQL_LOGIN.exe`
           3. Iniciar sesión con credenciales
-          
+
           ### 📋 Requisitos
-          - Windows 10 o superior
+          - Windows 10 o superior (64-bit)
           - Conexión a Internet
+          - Visual C++ Redistributable 2019 (usualmente ya instalado)
         draft: false
         prerelease: false
       env:
