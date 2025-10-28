@@ -27,6 +27,21 @@ jobs:
         modules: 'qt5compat qtmultimedia'
         cache: true
 
+    - name: Download MySQL plugin
+      shell: pwsh
+      run: |
+        # Descargar plugin precompilado
+        Invoke-WebRequest -Uri "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/v1.0/qt6.6.1_msvc2019_64_mysql.zip" -OutFile mysql_plugin.zip
+        Expand-Archive mysql_plugin.zip -DestinationPath mysql_temp
+        # Copiar a la carpeta build
+        New-Item -ItemType Directory -Force -Path "build/sqldrivers"
+        Copy-Item "mysql_temp/qsqlmysql.dll" -Destination "build/sqldrivers/" -ErrorAction Continue
+        # También copiar libmysql.dll si existe
+        if (Test-Path "mysql_temp/libmysql.dll") {
+          Copy-Item "mysql_temp/libmysql.dll" -Destination "build/" -ErrorAction Continue
+        }
+        Write-Host "MySQL plugin setup completed"
+
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
       with:
@@ -47,22 +62,6 @@ jobs:
       run: |
         cd build
         windeployqt.exe SQL_LOGIN.exe --release --no-translations
-
-    - name: Copy MySQL plugin
-      continue-on-error: true
-      shell: pwsh
-      run: |
-        $qtPath = $env:Qt6_DIR
-        $sqlDriversSource = "$qtPath/plugins/sqldrivers"
-        $sqlDriversDest = "build/sqldrivers"
-
-        if (Test-Path $sqlDriversSource) {
-          New-Item -ItemType Directory -Force -Path $sqlDriversDest
-          if (Test-Path "$sqlDriversSource/qsqlmysql.dll") {
-            Copy-Item "$sqlDriversSource/qsqlmysql.dll" -Destination $sqlDriversDest
-            Write-Host "MySQL plugin copied successfully"
-          }
-        }
 
     - name: Create README
       shell: pwsh
