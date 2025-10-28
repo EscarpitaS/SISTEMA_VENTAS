@@ -1,5 +1,4 @@
 name: Build Windows Release
-
 on:
   push:
     branches: [ main, master ]
@@ -8,11 +7,9 @@ on:
   create:
     tags:
       - 'v*'
-
 jobs:
   build-windows:
     runs-on: windows-latest
-
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -26,21 +23,6 @@ jobs:
         arch: 'win64_msvc2019_64'
         modules: 'qt5compat qtmultimedia'
         cache: true
-
-    - name: Download MySQL plugin
-      shell: pwsh
-      run: |
-        # Descargar plugin precompilado versión 6.7.3 MSVC2019 64-bit
-        Invoke-WebRequest -Uri "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/qmysql_6.7.3/qsqlmysql.dll_Qt_SQL_driver_6.7.3_MSVC2019_64-bit.zip" -OutFile mysql_plugin.zip
-        Expand-Archive mysql_plugin.zip -DestinationPath mysql_temp
-        # Copiar a la carpeta build
-        New-Item -ItemType Directory -Force -Path "build/sqldrivers"
-        Copy-Item "mysql_temp/qsqlmysql.dll" -Destination "build/sqldrivers/" -ErrorAction Continue
-        # También copiar libmysql.dll si existe
-        if (Test-Path "mysql_temp/libmysql.dll") {
-          Copy-Item "mysql_temp/libmysql.dll" -Destination "build/" -ErrorAction Continue
-        }
-        Write-Host "MySQL plugin setup completed"
 
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
@@ -63,19 +45,77 @@ jobs:
         cd build
         windeployqt.exe SQL_LOGIN.exe --release --no-translations
 
+    - name: Download MySQL plugin
+      shell: pwsh
+      run: |
+        Write-Host "Downloading MySQL plugin for Qt 6.10.0 MSVC2022..."
+        $url = "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/qmysql_6.10.0/qsqlmysql.dll_Qt_SQL_driver_6.10.0_MSVC2022_64-bit.zip"
+        Invoke-WebRequest -Uri $url -OutFile mysql_plugin.zip
+
+        Write-Host "Extracting plugin..."
+        Expand-Archive mysql_plugin.zip -DestinationPath mysql_temp -Force
+
+        Write-Host "Creating sqldrivers directory..."
+        New-Item -ItemType Directory -Force -Path "build/sqldrivers"
+
+        Write-Host "Searching for qsqlmysql.dll..."
+        Get-ChildItem mysql_temp -Recurse | Format-Table Name, Directory
+
+        $dllPath = Get-ChildItem -Path mysql_temp -Filter "qsqlmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($dllPath) {
+          Copy-Item $dllPath.FullName -Destination "build/sqldrivers/qsqlmysql.dll"
+          Write-Host "SUCCESS: qsqlmysql.dll copied to build/sqldrivers/"
+        } else {
+          Write-Host "WARNING: qsqlmysql.dll not found, trying root directory..."
+          if (Test-Path "mysql_temp/qsqlmysql.dll") {
+            Copy-Item "mysql_temp/qsqlmysql.dll" -Destination "build/sqldrivers/"
+            Write-Host "SUCCESS: Copied from root"
+          }
+        }
+
+        Write-Host "Searching for libmysql.dll..."
+        $libmysqlPath = Get-ChildItem -Path mysql_temp -Filter "libmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($libmysqlPath) {
+          Copy-Item $libmysqlPath.FullName -Destination "build/"
+          Write-Host "libmysql.dll copied"
+        } else {
+          Write-Host "libmysql.dll not found (may not be needed)"
+        }
+
+    - name: Verify MySQL plugin
+      shell: pwsh
+      run: |
+        Write-Host "`n=== Verification ==="
+        Write-Host "Contents of build/sqldrivers/:"
+        if (Test-Path "build/sqldrivers") {
+          Get-ChildItem "build/sqldrivers" -Recurse | Format-Table Name, Length
+        } else {
+          Write-Host "ERROR: sqldrivers directory not found!"
+        }
+
+        if (Test-Path "build/sqldrivers/qsqlmysql.dll") {
+          Write-Host "`nSUCCESS: qsqlmysql.dll is present"
+          $fileInfo = Get-Item "build/sqldrivers/qsqlmysql.dll"
+          Write-Host "Size: $($fileInfo.Length) bytes"
+        } else {
+          Write-Host "`nERROR: qsqlmysql.dll NOT FOUND!"
+          exit 1
+        }
+
     - name: Create README
       shell: pwsh
       run: |
         $content = "Sistema de Ventas - Windows Portable`n"
         $content += "======================================`n`n"
         $content += "REQUISITOS:`n"
-        $content += "- Windows 10 o superior`n"
+        $content += "- Windows 10 o superior (64-bit)`n"
         $content += "- Conexion a Internet`n`n"
         $content += "INSTRUCCIONES:`n"
-        $content += "1. Extraer el ZIP`n"
-        $content += "2. Ejecutar SQL_LOGIN.exe`n"
+        $content += "1. Extraer el ZIP completo`n"
+        $content += "2. Ejecutar SQL_LOGIN.exe o Ejecutar.bat`n"
         $content += "3. Ingresar credenciales`n`n"
-        $content += "No requiere instalacion ni permisos de administrador.`n"
+        $content += "NOTA: No requiere instalacion ni permisos de administrador.`n"
+        $content += "Todas las dependencias estan incluidas.`n"
         $content | Out-File -FilePath "build/README.txt" -Encoding UTF8
 
     - name: Create launcher
@@ -83,17 +123,31 @@ jobs:
       run: |
         $batch = "@echo off`r`n"
         $batch += "title Sistema de Ventas`r`n"
-        $batch += "echo Iniciando...`r`n"
+        $batch += "cls`r`n"
+        $batch += "echo ========================================`r`n"
+        $batch += "echo   Sistema de Ventas`r`n"
+        $batch += "echo ========================================`r`n"
+        $batch += "echo.`r`n"
+        $batch += "echo Iniciando aplicacion...`r`n"
+        $batch += "echo.`r`n"
         $batch += "SQL_LOGIN.exe`r`n"
-        $batch += "if errorlevel 1 pause`r`n"
+        $batch += "if errorlevel 1 (`r`n"
+        $batch += "  echo.`r`n"
+        $batch += "  echo ERROR: No se pudo iniciar.`r`n"
+        $batch += "  echo Verifique que todas las DLLs esten presentes.`r`n"
+        $batch += "  echo.`r`n"
+        $batch += "  pause`r`n"
+        $batch += ")`r`n"
         $batch | Out-File -FilePath "build/Ejecutar.bat" -Encoding ASCII -NoNewline
 
     - name: Package portable version
       shell: pwsh
       run: |
         cd build
-        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile')
-        Get-ChildItem | Where-Object { $_.Name -notin $exclude -and $_.Name -notlike 'CMake*' } | Compress-Archive -DestinationPath ../SistemaVentas-Windows-Portable.zip
+        Write-Host "Packaging files..."
+        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile', 'mysql_temp')
+        Get-ChildItem | Where-Object { $_.Name -notin $exclude -and $_.Name -notlike 'CMake*' } | Compress-Archive -DestinationPath ../SistemaVentas-Windows-Portable.zip -Force
+        Write-Host "Package created successfully"
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
