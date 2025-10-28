@@ -49,8 +49,8 @@ jobs:
       shell: pwsh
       run: |
         Write-Host "Downloading MySQL plugin for Qt 6.10.0 MSVC2022..."
-        $url = "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/qmysql_6.10.0/qsqlmysql.dll_Qt_SQL_driver_6.10.0_MSVC2022_64-bit.zip"
-        Invoke-WebRequest -Uri $url -OutFile mysql_plugin.zip
+        $pluginUrl = "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/qmysql_6.10.0/qsqlmysql.dll_Qt_SQL_driver_6.10.0_MSVC2022_64-bit.zip"
+        Invoke-WebRequest -Uri $pluginUrl -OutFile mysql_plugin.zip
 
         Write-Host "Extracting plugin..."
         Expand-Archive mysql_plugin.zip -DestinationPath mysql_temp -Force
@@ -58,35 +58,47 @@ jobs:
         Write-Host "Creating sqldrivers directory..."
         New-Item -ItemType Directory -Force -Path "build/sqldrivers"
 
-        Write-Host "Searching for qsqlmysql.dll..."
-        Get-ChildItem mysql_temp -Recurse | Format-Table Name, Directory
-
+        Write-Host "Copying qsqlmysql.dll..."
         $dllPath = Get-ChildItem -Path mysql_temp -Filter "qsqlmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($dllPath) {
           Copy-Item $dllPath.FullName -Destination "build/sqldrivers/qsqlmysql.dll"
           Write-Host "SUCCESS: qsqlmysql.dll copied to build/sqldrivers/"
         } else {
-          Write-Host "WARNING: qsqlmysql.dll not found, trying root directory..."
+          Write-Host "WARNING: qsqlmysql.dll not found, trying root..."
           if (Test-Path "mysql_temp/qsqlmysql.dll") {
             Copy-Item "mysql_temp/qsqlmysql.dll" -Destination "build/sqldrivers/"
             Write-Host "SUCCESS: Copied from root"
           }
         }
 
+        Write-Host "`nDownloading MySQL Connector C (for libmysql.dll)..."
+        $mysqlConnectorUrl = "https://downloads.mysql.com/archives/get/p/19/file/mysql-connector-c-6.1.11-winx64.zip"
+        Invoke-WebRequest -Uri $mysqlConnectorUrl -OutFile mysql_connector.zip
+
+        Write-Host "Extracting MySQL Connector..."
+        Expand-Archive mysql_connector.zip -DestinationPath mysql_connector_temp -Force
+
         Write-Host "Searching for libmysql.dll..."
-        $libmysqlPath = Get-ChildItem -Path mysql_temp -Filter "libmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $libmysqlPath = Get-ChildItem -Path mysql_connector_temp -Filter "libmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($libmysqlPath) {
-          Copy-Item $libmysqlPath.FullName -Destination "build/"
-          Write-Host "libmysql.dll copied"
+          Copy-Item $libmysqlPath.FullName -Destination "build/libmysql.dll"
+          Write-Host "SUCCESS: libmysql.dll copied to build/"
         } else {
-          Write-Host "libmysql.dll not found (may not be needed)"
+          Write-Host "ERROR: libmysql.dll not found in MySQL Connector"
+          Write-Host "Listing contents:"
+          Get-ChildItem mysql_connector_temp -Recurse -Filter "*.dll" | Select-Object FullName
         }
+
+        Write-Host "`nMySQL setup completed"
 
     - name: Verify MySQL plugin
       shell: pwsh
       run: |
         Write-Host "`n=== Verification ==="
-        Write-Host "Contents of build/sqldrivers/:"
+        Write-Host "Contents of build/:"
+        Get-ChildItem "build" -Filter "*.dll" | Format-Table Name, Length
+
+        Write-Host "`nContents of build/sqldrivers/:"
         if (Test-Path "build/sqldrivers") {
           Get-ChildItem "build/sqldrivers" -Recurse | Format-Table Name, Length
         } else {
@@ -95,11 +107,15 @@ jobs:
 
         if (Test-Path "build/sqldrivers/qsqlmysql.dll") {
           Write-Host "`nSUCCESS: qsqlmysql.dll is present"
-          $fileInfo = Get-Item "build/sqldrivers/qsqlmysql.dll"
-          Write-Host "Size: $($fileInfo.Length) bytes"
         } else {
           Write-Host "`nERROR: qsqlmysql.dll NOT FOUND!"
           exit 1
+        }
+
+        if (Test-Path "build/libmysql.dll") {
+          Write-Host "SUCCESS: libmysql.dll is present"
+        } else {
+          Write-Host "WARNING: libmysql.dll NOT FOUND (may cause issues)"
         }
 
     - name: Create README
@@ -145,7 +161,7 @@ jobs:
       run: |
         cd build
         Write-Host "Packaging files..."
-        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile', 'mysql_temp')
+        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile', 'mysql_temp', 'mysql_connector_temp')
         Get-ChildItem | Where-Object { $_.Name -notin $exclude -and $_.Name -notlike 'CMake*' } | Compress-Archive -DestinationPath ../SistemaVentas-Windows-Portable.zip -Force
         Write-Host "Package created successfully"
 
