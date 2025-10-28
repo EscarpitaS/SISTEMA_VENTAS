@@ -45,7 +45,7 @@ jobs:
         cd build
         windeployqt.exe SQL_LOGIN.exe --release --no-translations
 
-    - name: Download MySQL plugin
+    - name: Download MySQL plugin and dependencies
       shell: pwsh
       run: |
         Write-Host "Downloading MySQL plugin for Qt 6.10.0 MSVC2022..."
@@ -62,31 +62,75 @@ jobs:
         $dllPath = Get-ChildItem -Path mysql_temp -Filter "qsqlmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($dllPath) {
           Copy-Item $dllPath.FullName -Destination "build/sqldrivers/qsqlmysql.dll"
-          Write-Host "SUCCESS: qsqlmysql.dll copied to build/sqldrivers/"
-        } else {
-          Write-Host "WARNING: qsqlmysql.dll not found, trying root..."
-          if (Test-Path "mysql_temp/qsqlmysql.dll") {
-            Copy-Item "mysql_temp/qsqlmysql.dll" -Destination "build/sqldrivers/"
-            Write-Host "SUCCESS: Copied from root"
+          Write-Host "SUCCESS: qsqlmysql.dll copied"
+        }
+
+        Write-Host "`nDownloading libmysql.dll from alternative sources..."
+        $libmysqlCopied = $false
+
+        # Intento 1: WinLibs mirror
+        if (-not $libmysqlCopied) {
+          try {
+            Write-Host "Trying WinLibs mirror..."
+            $libmysqlUrl = "https://github.com/winlibs/libmysql/releases/download/v8.0.31/libmysql-8.0.31-winx64.zip"
+            Invoke-WebRequest -Uri $libmysqlUrl -OutFile libmysql.zip -ErrorAction Stop -TimeoutSec 60
+
+            Expand-Archive libmysql.zip -DestinationPath libmysql_temp -Force
+
+            $libmysqlPath = Get-ChildItem -Path libmysql_temp -Filter "libmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($libmysqlPath) {
+              Copy-Item $libmysqlPath.FullName -Destination "build/libmysql.dll"
+              Write-Host "SUCCESS: libmysql.dll copied from WinLibs"
+              $libmysqlCopied = $true
+            }
+          } catch {
+            Write-Host "WinLibs mirror failed: $($_.Exception.Message)"
           }
         }
 
-        Write-Host "`nDownloading MySQL Connector C (for libmysql.dll)..."
-        $mysqlConnectorUrl = "https://downloads.mysql.com/archives/get/p/19/file/mysql-connector-c-6.1.11-winx64.zip"
-        Invoke-WebRequest -Uri $mysqlConnectorUrl -OutFile mysql_connector.zip
+        # Intento 2: MySQL CDN
+        if (-not $libmysqlCopied) {
+          try {
+            Write-Host "Trying MySQL CDN..."
+            $cdnUrl = "https://cdn.mysql.com/Downloads/Connector-C/mysql-connector-c-6.1.11-winx64.zip"
+            Invoke-WebRequest -Uri $cdnUrl -OutFile mysql_connector.zip -TimeoutSec 120 -ErrorAction Stop
 
-        Write-Host "Extracting MySQL Connector..."
-        Expand-Archive mysql_connector.zip -DestinationPath mysql_connector_temp -Force
+            Expand-Archive mysql_connector.zip -DestinationPath mysql_connector_temp -Force
 
-        Write-Host "Searching for libmysql.dll..."
-        $libmysqlPath = Get-ChildItem -Path mysql_connector_temp -Filter "libmysql.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($libmysqlPath) {
-          Copy-Item $libmysqlPath.FullName -Destination "build/libmysql.dll"
-          Write-Host "SUCCESS: libmysql.dll copied to build/"
-        } else {
-          Write-Host "ERROR: libmysql.dll not found in MySQL Connector"
-          Write-Host "Listing contents:"
-          Get-ChildItem mysql_connector_temp -Recurse -Filter "*.dll" | Select-Object FullName
+            $libmysqlPath = Get-ChildItem -Path mysql_connector_temp -Filter "libmysql.dll" -Recurse | Select-Object -First 1
+            if ($libmysqlPath) {
+              Copy-Item $libmysqlPath.FullName -Destination "build/libmysql.dll"
+              Write-Host "SUCCESS: libmysql.dll copied from MySQL CDN"
+              $libmysqlCopied = $true
+            }
+          } catch {
+            Write-Host "MySQL CDN failed: $($_.Exception.Message)"
+          }
+        }
+
+        # Intento 3: Archive.org mirror
+        if (-not $libmysqlCopied) {
+          try {
+            Write-Host "Trying Archive.org mirror..."
+            $archiveUrl = "https://archive.org/download/mysql-connector-c-6.1.11-winx64/mysql-connector-c-6.1.11-winx64.zip"
+            Invoke-WebRequest -Uri $archiveUrl -OutFile mysql_archive.zip -TimeoutSec 120 -ErrorAction Stop
+
+            Expand-Archive mysql_archive.zip -DestinationPath mysql_archive_temp -Force
+
+            $libmysqlPath = Get-ChildItem -Path mysql_archive_temp -Filter "libmysql.dll" -Recurse | Select-Object -First 1
+            if ($libmysqlPath) {
+              Copy-Item $libmysqlPath.FullName -Destination "build/libmysql.dll"
+              Write-Host "SUCCESS: libmysql.dll copied from Archive.org"
+              $libmysqlCopied = $true
+            }
+          } catch {
+            Write-Host "Archive.org mirror failed: $($_.Exception.Message)"
+          }
+        }
+
+        if (-not $libmysqlCopied) {
+          Write-Host "WARNING: Could not download libmysql.dll from any source"
+          Write-Host "The application may not work without this file"
         }
 
         Write-Host "`nMySQL setup completed"
@@ -95,7 +139,7 @@ jobs:
       shell: pwsh
       run: |
         Write-Host "`n=== Verification ==="
-        Write-Host "Contents of build/:"
+        Write-Host "Contents of build/ (DLLs only):"
         Get-ChildItem "build" -Filter "*.dll" | Format-Table Name, Length
 
         Write-Host "`nContents of build/sqldrivers/:"
@@ -105,17 +149,27 @@ jobs:
           Write-Host "ERROR: sqldrivers directory not found!"
         }
 
+        $errors = @()
+
         if (Test-Path "build/sqldrivers/qsqlmysql.dll") {
           Write-Host "`nSUCCESS: qsqlmysql.dll is present"
         } else {
           Write-Host "`nERROR: qsqlmysql.dll NOT FOUND!"
-          exit 1
+          $errors += "qsqlmysql.dll missing"
         }
 
         if (Test-Path "build/libmysql.dll") {
           Write-Host "SUCCESS: libmysql.dll is present"
         } else {
-          Write-Host "WARNING: libmysql.dll NOT FOUND (may cause issues)"
+          Write-Host "WARNING: libmysql.dll NOT FOUND"
+          $errors += "libmysql.dll missing"
+        }
+
+        if ($errors.Count -gt 0) {
+          Write-Host "`nErrors found: $($errors -join ', ')"
+          if ($errors -contains "qsqlmysql.dll missing") {
+            exit 1
+          }
         }
 
     - name: Create README
@@ -161,7 +215,7 @@ jobs:
       run: |
         cd build
         Write-Host "Packaging files..."
-        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile', 'mysql_temp', 'mysql_connector_temp')
+        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile', 'mysql_temp', 'mysql_connector_temp', 'libmysql_temp', 'mysql_archive_temp')
         Get-ChildItem | Where-Object { $_.Name -notin $exclude -and $_.Name -notlike 'CMake*' } | Compress-Archive -DestinationPath ../SistemaVentas-Windows-Portable.zip -Force
         Write-Host "Package created successfully"
 
