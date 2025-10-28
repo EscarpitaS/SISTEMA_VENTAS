@@ -30,8 +30,8 @@ jobs:
     - name: Download MySQL plugin
       shell: pwsh
       run: |
-        # Descargar plugin precompilado
-        Invoke-WebRequest -Uri "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/v1.0/qt6.6.1_msvc2019_64_mysql.zip" -OutFile mysql_plugin.zip
+        # Descargar plugin precompilado versión 6.7.3 MSVC2019 64-bit
+        Invoke-WebRequest -Uri "https://github.com/thecodemonkey86/qt_mysql_driver/releases/download/qmysql_6.7.3/qsqlmysql.dll_Qt_SQL_driver_6.7.3_MSVC2019_64-bit.zip" -OutFile mysql_plugin.zip
         Expand-Archive mysql_plugin.zip -DestinationPath mysql_temp
         # Copiar a la carpeta build
         New-Item -ItemType Directory -Force -Path "build/sqldrivers"
