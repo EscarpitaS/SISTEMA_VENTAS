@@ -67,116 +67,38 @@ jobs:
     - name: Create README
       shell: pwsh
       run: |
-        $readme = @"
-===========================================
-   SISTEMA DE VENTAS - Windows Portable
-===========================================
+        $content = "Sistema de Ventas - Windows Portable`n"
+        $content += "======================================`n`n"
+        $content += "REQUISITOS:`n"
+        $content += "- Windows 10 o superior`n"
+        $content += "- Conexion a Internet`n`n"
+        $content += "INSTRUCCIONES:`n"
+        $content += "1. Extraer el ZIP`n"
+        $content += "2. Ejecutar SQL_LOGIN.exe`n"
+        $content += "3. Ingresar credenciales`n`n"
+        $content += "No requiere instalacion ni permisos de administrador.`n"
+        $content | Out-File -FilePath "build/README.txt" -Encoding UTF8
 
-REQUISITOS:
-- Windows 10 o superior (x64)
-- Conexión a Internet para acceder a la base de datos
-
-INSTRUCCIONES:
-1. Extraer todo el contenido del ZIP a una carpeta
-2. Doble clic en SQL_LOGIN.exe o Ejecutar.bat
-3. Ingresar credenciales de acceso
-
-NOTAS:
-- No requiere instalación
-- No requiere permisos de administrador
-- Todas las dependencias de Qt están incluidas
-
-CONFIGURACIÓN DE BASE DE DATOS:
-La aplicación se conecta automáticamente a:
-- Host: database-2.c8x408ogmb0e.us-east-1.rds.amazonaws.com
-- Puerto: 3306
-- Base de datos: sistema_ventas
-
-SOLUCIÓN DE PROBLEMAS:
-- Si no inicia, instale Visual C++ Redistributable 2019
-- Verifique su conexión a Internet
-- Contacte al administrador del sistema
-
-Versión: ${{ github.ref_name }}
-Compilado: ${{ github.event.head_commit.timestamp }}
-===========================================
-"@
-        $readme | Out-File -FilePath "build/README.txt" -Encoding UTF8
-
-    - name: Create launcher batch file
+    - name: Create launcher
       shell: pwsh
       run: |
-        $batch = @"
-@echo off
-title Sistema de Ventas
-cls
-echo ========================================
-echo    SISTEMA DE VENTAS
-echo ========================================
-echo.
-echo Iniciando aplicacion...
-echo.
-
-SQL_LOGIN.exe
-
-if errorlevel 1 (
-    echo.
-    echo ========================================
-    echo ERROR: No se pudo iniciar la aplicacion
-    echo ========================================
-    echo.
-    echo Posibles causas:
-    echo - Falta Visual C++ Redistributable 2019
-    echo - Sin conexion a Internet
-    echo - Error de conexion a la base de datos
-    echo.
-    echo Presione cualquier tecla para salir...
-    pause >nul
-)
-"@
-        $batch | Out-File -FilePath "build/Ejecutar.bat" -Encoding ASCII
+        $batch = "@echo off`r`n"
+        $batch += "title Sistema de Ventas`r`n"
+        $batch += "echo Iniciando...`r`n"
+        $batch += "SQL_LOGIN.exe`r`n"
+        $batch += "if errorlevel 1 pause`r`n"
+        $batch | Out-File -FilePath "build/Ejecutar.bat" -Encoding ASCII -NoNewline
 
     - name: Package portable version
       shell: pwsh
       run: |
         cd build
-        # Excluir archivos innecesarios
-        $filesToZip = Get-ChildItem -Exclude @('*.cpp', '*.h', '*.obj', '*.o', 'CMakeFiles', 'cmake_install.cmake', 'Makefile', '*.cmake')
-        Compress-Archive -Path $filesToZip -DestinationPath ../SistemaVentas-Windows-Portable.zip -Force
+        $exclude = @('*.cpp', '*.h', '*.obj', 'CMakeFiles', '*.cmake', 'Makefile')
+        Get-ChildItem | Where-Object { $_.Name -notin $exclude -and $_.Name -notlike 'CMake*' } | Compress-Archive -DestinationPath ../SistemaVentas-Windows-Portable.zip
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: SistemaVentas-Windows-${{ github.sha }}
+        name: SistemaVentas-Windows
         path: SistemaVentas-Windows-Portable.zip
         retention-days: 90
-
-    - name: Create Release (on tag)
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: SistemaVentas-Windows-Portable.zip
-        body: |
-          ## Sistema de Ventas - Release ${{ github.ref_name }}
-
-          ### 📦 Descarga
-          Descargar el archivo ZIP y extraer en cualquier carpeta.
-
-          ### ✨ Características
-          - Versión portable (no requiere instalación)
-          - No requiere permisos de administrador
-          - Todas las dependencias incluidas
-
-          ### 🚀 Uso
-          1. Extraer el ZIP
-          2. Ejecutar `Ejecutar.bat` o `SQL_LOGIN.exe`
-          3. Iniciar sesión con credenciales
-
-          ### 📋 Requisitos
-          - Windows 10 o superior (64-bit)
-          - Conexión a Internet
-          - Visual C++ Redistributable 2019 (usualmente ya instalado)
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
